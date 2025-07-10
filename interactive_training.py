@@ -17,7 +17,7 @@ import pickle
 
 from utils import get_config, setup_experiment, setup_wandb
 from models import initialize_model_and_optimizers, get_teacher_model, save_round_checkpoint, get_vllm_student
-from data_utils import load_babylm_data, student_po_collate_fn, InteractionDataset, teacher_correction_prompt
+from data_utils import load_babylm_data, get_student_po_collate_fn, InteractionDataset, teacher_correction_prompt
 
 def full_train_loop(cfg, student, optimizer, scheduler):
     # Load the seed BabyLM dataset
@@ -47,12 +47,13 @@ def construct_interaction_data(cfg, student, all_babylm_data, curr_round, num_ro
     int_dataset.add_teacher_corrections(teacher_corrections)
     
     int_dataset.set_mode("preference_optimization")
+    student_po_collate_fn = get_student_po_collate_fn(int_dataset.student_eos)
     return DataLoader(int_dataset, batch_size=cfg['student_po_bsz'],
                       shuffle=True, collate_fn=student_po_collate_fn)
 
 def sample_student_data(cfg, student, interaction_dataset, curr_round):
     savepath = os.path.join(cfg['logdir'], f'student_data_{curr_round}.pkl')
-    vllm_student, sampling_params = get_vllm_student(cfg, student, interaction_dataset)
+    vllm_student, sampling_params = get_vllm_student(cfg, student, interaction_dataset) # TODO
 
     # Iterate over the dataset and get student completions
     contexts = interaction_dataset.get_existing_contexts()
@@ -183,6 +184,7 @@ def round_train_epoch(cfg, student, optimizer, scheduler, interaction_loader, no
     gamma = cfg['simpo_beta'] * cfg['simpo_gamma_ratio']
     sft_lambda = cfg['sft_lambda']
     steps_for_one_mil = len(interaction_loader) // 5
+    steps_for_one_third = len(interaction_loader) // 3
     for train_step, minibatch in enumerate(tqdm(interaction_loader)):
         w_input_tokens, w_target_tokens, w_sft_mask, w_simpo_mask, \
             l_input_tokens, l_target_tokens, l_simpo_mask = unpack_simpo_batch(minibatch, device)
@@ -278,6 +280,11 @@ def round_train_epoch(cfg, student, optimizer, scheduler, interaction_loader, no
             curr_million = epoch * 5 + train_step // steps_for_one_mil
             save_round_checkpoint(student, optimizer, scheduler, curr_round, epoch, cfg["checkpoint_dir"], prefix,
                                   other_folder_name=f"checkpoint_{curr_million}M")
+
+        if prefix != "sft_phase" and (curr_round in [0, 1] and epoch == 0) and train_step % (2*steps_for_one_third) == 0:
+            num_words = curr_round * 50 + 40
+            save_round_checkpoint(student, optimizer, scheduler, curr_round, epoch, cfg["checkpoint_dir"], prefix,
+                                  other_folder_name=f"checkpoint_{num_words}M")
 
     # Intermediate checkpoint spot for 5M, 10M and other 10M steps until 100M
     if prefix == "sft_phase" and epoch == 0 and curr_round == 0:

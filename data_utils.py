@@ -14,7 +14,6 @@ import os
 from tqdm import tqdm
 import pickle
 
-STUDENT_EOS = 50256
 TRAIN_PATH_100M = 'data/text_data/clean_train_100M'
 DATASETS = ['bnc_spoken', 'childes', 'gutenberg', 'open_subtitles', 'simple_wiki', 'switchboard']
 
@@ -97,6 +96,8 @@ class InteractionDataset(Dataset):
     def __init__(self, cfg, sampled_context_completions):
         self.mode = "student_sampling"
         self.student_processor = student_tokenizer(cfg)
+        self.student_bos = self.student_processor.bos_token_id
+        self.student_eos = self.student_processor.eos_token_id
         self.data = sampled_context_completions
 
     def __len__(self):
@@ -156,9 +157,9 @@ class InteractionDataset(Dataset):
 
         # Next process the winning and losing items
         winning_portion = int_dict['student_winning']
-        w_tokens = torch.LongTensor([STUDENT_EOS] + context + winning_portion + [STUDENT_EOS])
+        w_tokens = torch.LongTensor([self.student_bos] + context + winning_portion + [self.student_eos])
         losing_portion = int_dict['student_losing']
-        l_tokens = torch.LongTensor([STUDENT_EOS] + context + losing_portion + [STUDENT_EOS])
+        l_tokens = torch.LongTensor([self.student_bos] + context + losing_portion + [self.student_eos])
 
         return w_tokens, l_tokens, context_len
 
@@ -178,31 +179,32 @@ def load_babylm_data(cfg):
     return full_babylm_dset
 
 def student_tokenizer(cfg):
-    return AutoTokenizer.from_pretrained("gpt2")
+    return AutoTokenizer.from_pretrained(f"./tokenizers/100m")
 
-def student_po_collate_fn(batch):
-    # Winning item processing
-    w_tokens = pad_sequence([item[0] for item in batch], padding_value=STUDENT_EOS, batch_first=True)
-    context_lens = [item[2] for item in batch]
-    w_input_tokens = w_tokens[:, :-1]
-    w_target_tokens = w_tokens[:, 1:]
+def get_student_po_collate_fn(student_eos):
+    def student_po_collate_fn(batch):
+        # Winning item processing
+        w_tokens = pad_sequence([item[0] for item in batch], padding_value=student_eos, batch_first=True)
+        context_lens = [item[2] for item in batch]
+        w_input_tokens = w_tokens[:, :-1]
+        w_target_tokens = w_tokens[:, 1:]
 
-    w_sft_mask = w_input_tokens != STUDENT_EOS
-    w_sft_mask[:, 0] = 1
-    w_simpo_mask = w_input_tokens != STUDENT_EOS
-    for i, item in enumerate(batch):
-        w_simpo_mask[i, :context_lens[i] - 1] = 0
+        w_sft_mask = w_input_tokens != student_eos
+        w_simpo_mask = w_input_tokens != student_eos
+        for i, item in enumerate(batch):
+            w_simpo_mask[i, :context_lens[i] - 1] = 0
 
-    # Losing item processing
-    l_tokens = pad_sequence([item[1] for item in batch], padding_value=STUDENT_EOS, batch_first=True)
-    l_input_tokens = l_tokens[:, :-1]
-    l_target_tokens = l_tokens[:, 1:]
-    l_simpo_mask = l_input_tokens != STUDENT_EOS
-    for i, item in enumerate(batch):
-        l_simpo_mask[i, :context_lens[i] - 1] = 0
+        # Losing item processing
+        l_tokens = pad_sequence([item[1] for item in batch], padding_value=student_eos, batch_first=True)
+        l_input_tokens = l_tokens[:, :-1]
+        l_target_tokens = l_tokens[:, 1:]
+        l_simpo_mask = l_input_tokens != student_eos
+        for i, item in enumerate(batch):
+            l_simpo_mask[i, :context_lens[i] - 1] = 0
 
-    return w_input_tokens, w_target_tokens, w_sft_mask, w_simpo_mask, \
-        l_input_tokens, l_target_tokens, l_simpo_mask
+        return w_input_tokens, w_target_tokens, w_sft_mask, w_simpo_mask, \
+            l_input_tokens, l_target_tokens, l_simpo_mask
+    return student_po_collate_fn
     
 ## PROMPTS ##
 

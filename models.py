@@ -25,21 +25,28 @@ def initialize_model_and_optimizers(cfg):
 
 def initialize_student_model(cfg):
     # First load the student
-    config = GPT2Config.from_pretrained("gpt2")
+    config = GPT2Config.from_pretrained(f"./configs/100m")
     student = GPT2LMHeadModel(config).to(DEVICE)
     return student
 
 def get_vllm_student(cfg, student, interaction_dataset, n=1):
     # Push things to the hub
-    repo_name = "<repo_name>"
+    repo_name = "momergul/babylm_interactive_gpt2_student"
     student.push_to_hub(repo_name)
     interaction_dataset.student_processor.push_to_hub(repo_name)
+    config = GPT2Config.from_pretrained(f"./configs/100m")
+
+    override_dict = {
+        'bos_token_id' : config.bos_token_id,
+        'eos_token_id' : config.eos_token_id,
+        'vocab_size' : config.vocab_size,
+    }
 
     # Loading the vLLM wrapper
     gc.collect()
     torch.cuda.empty_cache()
 
-    vllm_student = LLM(model=repo_name, dtype='bfloat16', enable_prefix_caching=True, gpu_memory_utilization=0.6)
+    vllm_student = LLM(model=repo_name, tokenizer=repo_name, dtype='bfloat16', enable_prefix_caching=True, gpu_memory_utilization=0.6, hf_overrides=override_dict)
     completion_tokens = cfg['datapoint_length'] - int(cfg['datapoint_length'] * cfg['context_proportion'])
     sampling_params = SamplingParams(n=n, top_p=0.8, min_tokens=completion_tokens-1, max_tokens=completion_tokens)
     return vllm_student, sampling_params

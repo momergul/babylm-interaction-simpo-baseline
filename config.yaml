@@ -10,7 +10,7 @@
 "teacher_sample_temperature" : 1.0,
 
 # Training hyperparameters
-"n_sft_epochs" : 8,
+"n_sft_epochs" : 7,
 "n_po_epochs" : 2,
 
 "student_po_bsz" : 16,
@@ -30,7 +30,7 @@
 "student_model" : "gpt2",
 
 # Experiment arguments
-"base_folder" : "babylm-interaction-dpo-baseline/experiments",
+"base_folder" : "experiments",
 "experiment_name" : "testing",
 
 "use_wandb" : False,
